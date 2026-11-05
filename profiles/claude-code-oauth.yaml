@@ -1,0 +1,31 @@
+# Claude Code をサブスクリプション(Team / Max)の OAuth トークンで使うための provider profile。
+# トークンは `claude setup-token` で発行する長期トークン(CLAUDE_CODE_OAUTH_TOKEN)。
+# sandbox には placeholder だけが入り、proxy が api.anthropic.com 宛ての
+# Authorization: Bearer ヘッダーで本物へ差し替える。
+id: claude-code-oauth
+display_name: Claude Code (OAuth)
+description: Claude Code CLI with a subscription OAuth token
+category: agent
+inference_capable: true
+credentials:
+  - name: oauth_token
+    description: Long-lived OAuth token from `claude setup-token`
+    env_vars: [CLAUDE_CODE_OAUTH_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [oauth_token]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+  # 対話モードは起動時に platform.claude.com へ接続を確認する。塞ぐと ECONNREFUSED で止まる
+  - host: platform.claude.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/bin/claude, /usr/bin/claude]

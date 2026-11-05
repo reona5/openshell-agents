@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# sandbox 内で実行する。provider が注入した placeholder から ~/.codex/auth.json を作り、codex を起動する。
+set -euo pipefail
+: "${CODEX_AUTH_ACCESS_TOKEN:?provider codex is not attached}"
+: "${CODEX_ACCOUNT_ID:?pass --env CODEX_ACCOUNT_ID=...}"
+mkdir -p "$HOME/.codex"
+node - <<'NODE'
+const fs = require("fs");
+const b64u = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const now = Math.floor(Date.now() / 1000);
+const idToken = [b64u({ alg: "none", typ: "JWT" }),
+  b64u({ iss: "https://auth.openai.com", aud: "codex", sub: "openshell", email: "agent@openshell.local", iat: now, exp: now + 3600 }),
+  "placeholder"].join(".");
+fs.writeFileSync(`${process.env.HOME}/.codex/auth.json`, JSON.stringify({
+  auth_mode: "chatgpt", OPENAI_API_KEY: null,
+  tokens: { id_token: idToken, access_token: process.env.CODEX_AUTH_ACCESS_TOKEN,
+            refresh_token: "gateway-managed-refresh-token", account_id: process.env.CODEX_ACCOUNT_ID },
+  last_refresh: new Date().toISOString() }, null, 2));
+NODE
+chmod 600 "$HOME/.codex/auth.json"
+exec codex "$@"

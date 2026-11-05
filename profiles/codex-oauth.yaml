@@ -1,0 +1,23 @@
+# Codex を ChatGPT サブスクリプションの OAuth で使う provider profile(検証用)。
+# access_token だけを provider に入れ、sandbox 側の auth.json には placeholder を書く。
+# account_id はローカル比較に使われるので placeholder にできず、環境変数で平文を渡す。
+# refresh_token は入れていない(期限切れ時はホストで codex を使って更新し provider update する)。
+id: codex-oauth
+display_name: Codex (OAuth, access token only)
+description: OpenAI Codex CLI with a ChatGPT OAuth access token
+category: agent
+inference_capable: true
+credentials:
+  - name: access_token
+    description: Codex OAuth access token
+    env_vars: [CODEX_AUTH_ACCESS_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [access_token]
+endpoints:
+  - { host: api.openai.com, port: 443, protocol: rest, access: read-write, enforcement: enforce }
+  - { host: chatgpt.com, port: 443, protocol: rest, access: read-write, enforcement: enforce }
+  - { host: ab.chatgpt.com, port: 443, protocol: rest, access: read-write, enforcement: enforce }
+binaries: [/usr/bin/codex, /usr/local/bin/codex, /usr/lib/node_modules/@openai/**]

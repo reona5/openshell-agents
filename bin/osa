@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# osa: OpenShell で Claude Code / Codex を動かすための薄いラッパー。
+#
+#   osa setup                 profile の登録とイメージのビルド
+#   osa login claude|codex|github
+#                             トークンを provider に登録する(画面に出さない)
+#   osa new NAME [REPO]       sandbox を作る。REPO(owner/name)を渡すと中で clone する
+#   osa shell NAME            sandbox で新しいログインシェルを開く
+#   osa claude NAME [ARGS]    sandbox で claude を起動する
+#   osa codex NAME [ARGS]     sandbox で codex を起動する
+#   osa allow NAME HOST       宛先 HOST:443 を claude と codex に開ける(policy をその場で更新)
+#   osa rm NAME               sandbox を消す
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${OSA_IMAGE:-openshell-agents:local}"
+OPENSHELL_TAG="${OSA_OPENSHELL_TAG:-v0.1.7}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/openshell-agents"
+
+die() { echo "osa: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 が見つからない"; }
+
+provider_exists() { openshell provider get "$1" >/dev/null 2>&1; }
+
+put_profile() {
+  local id="$1" src="$2"
+  if openshell provider profile describe "$id" >/dev/null 2>&1; then
+    # update は楽観ロック。現在の resource_version を付けたコピーで更新する
+    local rv tmp; tmp="$(mktemp -d)/$id.yaml"
+    rv="$(openshell provider profile export "$id" | awk '/^resource_version:/{print $2; exit}')"
+    if [[ "$src" == http* ]]; then curl -fsSL "$src"; else cat "$src"; fi \
+      | awk -v rv="$rv" '{print} /^id:/{print "resource_version: " rv}' > "$tmp"
+    openshell provider profile update "$id" -f "$tmp" >/dev/null || { rm -rf "${tmp%/*}"; return 1; }
+    rm -rf "${tmp%/*}"
+  else
+    openshell provider profile import -f "$src" >/dev/null
+  fi
+  echo "profile: $id"
+}
+
+cmd_setup() {
+  need openshell; need docker
+  local f
+  for f in "$ROOT"/profiles/*.yaml; do
+    put_profile "$(basename "$f" .yaml)" "$f"
+  done
+  # GitHub は公式の例をそのまま使う(clone / fetch は可、push は不可)
+  put_profile github "https://raw.githubusercontent.com/NVIDIA/OpenShell/${OPENSHELL_TAG}/providers/github.yaml"
+  docker build -q -t "$IMAGE" "$ROOT/image" >/dev/null
+  echo "image: $IMAGE"
+  if [[ "$(uname -s)" == Darwin ]]; then
+    local toml=/opt/homebrew/var/openshell/gateway.toml
+    if ! grep -q 'supervisor_network_mode *= *"bridge"' "$toml" 2>/dev/null; then
+      echo
+      echo "macOS: gateway の設定が必要です。macos/README.md を見て $toml を更新してください。"
+    fi
+  fi
+}
+
+create_or_update() {
+  local name="$1" type="$2" key="$3"
+  if provider_exists "$name"; then
+    openshell provider update "$name" --credential "$key" >/dev/null
+  else
+    openshell provider create --name "$name" --type "$type" --credential "$key" >/dev/null
+  fi
+  echo "provider: $name"
+}
+
+cmd_login() {
+  case "${1:-}" in
+    claude)
+      echo "別の画面で 'claude setup-token' を実行し、表示されたトークンを貼り付けてください(表示されません)。"
+      local t; read -rs t; echo
+      [[ -n "$t" ]] || die "トークンが空"
+      CLAUDE_CODE_OAUTH_TOKEN="$t" create_or_update claude claude-code-oauth CLAUDE_CODE_OAUTH_TOKEN
+      ;;
+    codex)
+      need jq
+      local auth="${CODEX_HOME:-$HOME/.codex}/auth.json"
+      [[ -f "$auth" ]] || die "$auth がない。先にホストで 'codex login' してください"
+      CODEX_AUTH_ACCESS_TOKEN="$(jq -er .tokens.access_token "$auth")" \
+        create_or_update codex codex-oauth CODEX_AUTH_ACCESS_TOKEN
+      # account_id は秘密ではないが、sandbox 側でローカル比較に使うので平文で持つ
+      mkdir -p "$STATE_DIR"; umask 077
+      jq -er .tokens.account_id "$auth" > "$STATE_DIR/codex-account-id"
+      ;;
+    github)
+      need gh
+      GITHUB_TOKEN="$(gh auth token)" create_or_update github github GITHUB_TOKEN
+      ;;
+    *) die "usage: osa login claude|codex|github" ;;
+  esac
+}
+
+cmd_new() {
+  local name="${1:?usage: osa new NAME [OWNER/REPO]}" repo="${2:-}"
+  local args=(--name "$name" --policy "$ROOT/policy/sandbox.yaml" --from "$IMAGE" --no-auto-providers)
+  local p
+  for p in claude codex github; do
+    provider_exists "$p" && args+=(--provider "$p")
+  done
+  if [[ -f "$STATE_DIR/codex-account-id" ]]; then
+    args+=(--env "CODEX_ACCOUNT_ID=$(cat "$STATE_DIR/codex-account-id")")
+  fi
+  # コマンドを渡さないとメインプロセスは bash -l になり、'openshell sandbox connect' で入れる
+  openshell sandbox create "${args[@]}" </dev/null >/dev/null &
+  local i
+  for i in $(seq 1 60); do
+    openshell sandbox list 2>/dev/null | grep -Eq "^${name} .*Ready" && break
+    sleep 2
+  done
+  openshell sandbox list 2>/dev/null | grep -Eq "^${name} .*Ready" || die "sandbox $name が Ready にならない"
+  openshell sandbox exec --name "$name" --no-tty -- bash -lc '
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then GH_TOKEN=$GITHUB_TOKEN gh auth setup-git >/dev/null 2>&1 || true; fi'
+  if [[ -n "$repo" ]]; then
+    openshell sandbox exec --name "$name" --no-tty -- bash -lc "cd /sandbox && git clone -q https://github.com/${repo}.git"
+    # clone したリポジトリだけ Claude Code のフォルダ信頼を付けておく
+    openshell sandbox exec --name "$name" --no-tty -- node -e '
+      const fs=require("fs"), f=process.env.HOME+"/.claude.json", d=process.argv[1];
+      const j=fs.existsSync(f)?JSON.parse(fs.readFileSync(f)):{};
+      j.projects=j.projects||{}; j.projects[d]={...(j.projects[d]||{}),hasTrustDialogAccepted:true};
+      fs.writeFileSync(f,JSON.stringify(j,null,2));' "/sandbox/${repo##*/}"
+    echo "cloned: /sandbox/${repo##*/}"
+  fi
+  echo "ready: $name  (osa shell $name / osa claude $name / osa codex $name)"
+}
+
+workdir_of() {
+  # clone したリポジトリが 1 つならそこで起動する
+  openshell sandbox exec --name "$1" --no-tty -- bash -lc \
+    'set -- /sandbox/*/.git; [[ $# -eq 1 && -d $1 ]] && dirname "$1" || echo /sandbox'
+}
+
+cmd_shell()  { local n="${1:?usage: osa shell NAME}"; exec openshell sandbox exec --name "$n" --tty -- bash -l; }
+cmd_claude() {
+  local n="${1:?usage: osa claude NAME [ARGS]}"; shift
+  local wd; wd="$(workdir_of "$n")"
+  exec openshell sandbox exec --name "$n" --tty -- bash -lc 'cd "$0" && exec claude "$@"' "$wd" "$@"
+}
+cmd_codex() {
+  local n="${1:?usage: osa codex NAME [ARGS]}"; shift
+  local wd; wd="$(workdir_of "$n")"
+  exec openshell sandbox exec --name "$n" --tty -- bash -lc 'cd "$0" && exec codex-in-openshell "$@"' "$wd" "$@"
+}
+
+cmd_allow() {
+  local n="${1:?usage: osa allow NAME HOST}" host="${2:?usage: osa allow NAME HOST}"
+  openshell policy update "$n" --add-endpoint "${host}:443:read-write:rest:enforce" \
+    --binary /usr/local/bin/claude \
+    --binary /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex \
+    --binary /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex \
+    --rule-name "allow-${host//./-}" --wait
+}
+
+cmd_rm() { openshell sandbox delete "${1:?usage: osa rm NAME}"; }
+
+sub="${1:-}"; shift || true
+case "$sub" in
+  setup|login|new|shell|claude|codex|allow|rm) "cmd_$sub" "$@" ;;
+  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

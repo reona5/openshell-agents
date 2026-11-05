@@ -1,0 +1,13 @@
+# /opt/homebrew/var/openshell/gateway.toml(Homebrew で入れた gateway の設定)
+#
+# Docker driver の supervisor は既定で host ネットワークを使い、127.0.0.1 の gateway に繋ぐ。
+# Docker Desktop for Mac で host networking が無効だと 127.0.0.1 は Linux VM 側になり、
+# sandbox 作成が ControlSupervisorStartFailed で失敗する。bridge にすると
+# host.docker.internal 経由で繋がる。
+[openshell]
+version = 2
+
+[openshell.gateway]
+
+[openshell.drivers.docker]
+supervisor_network_mode = "bridge"

@@ -1,0 +1,49 @@
+# 配布用の最小 policy(検証中)。
+# - 認証情報つきの宛先(Anthropic / OpenAI / GitHub)は provider profile 側が宣言する。
+#   ここには書かない。provider を attach したぶんだけ開く。
+# - ここに書くのは認証情報なしのパッケージレジストリだけ。
+# - それ以外の宛先は、必要になったら `openshell policy update` で足す。
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  pypi:
+    name: pypi
+    endpoints:
+      - { host: pypi.org, port: 443, protocol: rest, enforcement: enforce, access: read-only }
+      - { host: files.pythonhosted.org, port: 443, protocol: rest, enforcement: enforce, access: read-only }
+    binaries:
+      - { path: /sandbox/.venv/bin/python }
+      - { path: /sandbox/.venv/bin/python3 }
+      - { path: /sandbox/.venv/bin/pip }
+      - { path: /usr/local/bin/uv }
+      - { path: "/sandbox/.uv/python/**" }
+
+  npm_registry:
+    name: npm-registry
+    endpoints:
+      - { host: registry.npmjs.org, port: 443, protocol: rest, enforcement: enforce, access: read-only }
+    binaries:
+      # npm は node で動くので node を許可するが、宛先はレジストリの読み取りだけ
+      - { path: /usr/bin/node }
