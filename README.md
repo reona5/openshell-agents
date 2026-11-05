@@ -64,3 +64,7 @@ base イメージに同梱されている policy は、次の理由で使って�
 - Codex は access_token だけを登録しています。期限が切れたら、ホストで `codex` を使って更新し、`bin/osa login codex` をもう一度実行してください。
 - Codex の `account_id` は、Codex がローカルで比較するので placeholder にできません。平文の環境変数で渡しています。
 - `osa allow` に渡すバイナリのパスは、このイメージの配置を前提にしています。
+
+## ライセンス
+
+Apache-2.0。[LICENSE](LICENSE) を見てください。
