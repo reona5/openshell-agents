@@ -3,7 +3,8 @@
 #
 #   osa setup                 profile の登録とイメージのビルド
 #   osa login claude|codex|github
-#                             トークンを provider に登録する(画面に出さない)
+#                             トークンを provider に登録する(画面に出さない)。
+#                             codex は gateway 専用にログインし、更新は gateway に任せる
 #   osa new NAME [REPO]       sandbox を作る。REPO(owner/name)を渡すと中で clone する
 #   osa shell NAME            sandbox で新しいログインシェルを開く
 #   osa claude NAME [ARGS]    sandbox で claude を起動する
@@ -76,14 +77,33 @@ cmd_login() {
       CLAUDE_CODE_OAUTH_TOKEN="$t" create_or_update claude claude-code-oauth CLAUDE_CODE_OAUTH_TOKEN
       ;;
     codex)
-      need jq
-      local auth="${CODEX_HOME:-$HOME/.codex}/auth.json"
-      [[ -f "$auth" ]] || die "$auth がない。先にホストで 'codex login' してください"
+      need jq; need codex
+      # ホストの ~/.codex とは別に、gateway 専用のログインを作る。gateway が refresh token を
+      # 更新すると元の refresh token は使えなくなるので、ホストのログインと共有しない
+      local home="$STATE_DIR/codex-home" auth
+      mkdir -p "$home"; chmod 700 "$home"
+      echo "gateway 専用の Codex ログインを作ります(ホストの ~/.codex には触れません)。"
+      CODEX_HOME="$home" codex login
+      auth="$home/auth.json"
+      [[ -f "$auth" ]] || die "ログインに失敗した"
+      local claims='.tokens.access_token | split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson'
+      local exp_ms client_id
+      exp_ms="$(jq -er "$claims | .exp * 1000" "$auth")" || die "access_token の exp を読めない"
+      client_id="$(jq -er "$claims | .client_id" "$auth")" || die "access_token の client_id を読めない"
       CODEX_AUTH_ACCESS_TOKEN="$(jq -er .tokens.access_token "$auth")" \
         create_or_update codex codex-oauth CODEX_AUTH_ACCESS_TOKEN
+      # refresh token は gateway に預け、期限の前に gateway が access_token を更新する
+      CODEX_REFRESH_TOKEN="$(jq -er .tokens.refresh_token "$auth")" \
+        openshell provider refresh configure codex --credential-key CODEX_AUTH_ACCESS_TOKEN \
+          --strategy oauth2-refresh-token --material client_id="$client_id" \
+          --secret-material-env refresh_token=CODEX_REFRESH_TOKEN \
+          --credential-expires-at "$exp_ms" >/dev/null
+      echo "refresh: codex"
       # account_id は秘密ではないが、sandbox 側でローカル比較に使うので平文で持つ
-      mkdir -p "$STATE_DIR"; umask 077
+      umask 077
       jq -er .tokens.account_id "$auth" > "$STATE_DIR/codex-account-id"
+      # トークンは gateway が持つので、手元の写しは消す
+      rm -f "$auth"
       ;;
     github)
       need gh

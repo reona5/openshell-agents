@@ -13,7 +13,7 @@ OpenShell v0.1.7、Claude Code 2.1.318、Codex 0.165.0 で確認しました(202
 
 - OpenShell v0.1.7 以降と、動いているローカル gateway
 - Docker
-- ホストにある `claude`、`codex`(`codex login` 済み)、`gh`(`gh auth login` 済み)、`jq`
+- ホストにある `claude`、`codex`、`gh`(`gh auth login` 済み)、`jq`
 
 macOS では gateway の設定が 1 か所必要です。[macos/README.md](macos/README.md) を見てください。
 
@@ -22,7 +22,7 @@ macOS では gateway の設定が 1 か所必要です。[macos/README.md](macos
 ```sh
 bin/osa setup                    # provider profile の登録とイメージのビルド
 bin/osa login claude             # claude setup-token の長期トークンを貼る(表示されない)
-bin/osa login codex              # ~/.codex/auth.json から access_token を登録する
+bin/osa login codex              # gateway 専用に codex login し、更新を gateway に任せる
 bin/osa login github             # gh auth token を登録する
 
 bin/osa new work owner/repo      # sandbox を作り、中で owner/repo を clone する
@@ -61,7 +61,7 @@ base イメージに同梱されている policy は、次の理由で使って�
 
 ## 制約
 
-- Codex は access_token だけを登録しています。期限が切れたら、ホストで `codex` を使って更新し、`bin/osa login codex` をもう一度実行してください。
+- Codex の refresh token は gateway が持ち、access_token の期限の前に更新します。ホストの `~/.codex` とは別にログインするので、ホストの Codex のログインには影響しません。更新に失敗したら(`openshell provider refresh status codex`)、`bin/osa login codex` をもう一度実行してください。
 - Codex の `account_id` は、Codex がローカルで比較するので placeholder にできません。平文の環境変数で渡しています。
 - `osa allow` に渡すバイナリのパスは、このイメージの配置を前提にしています。
 

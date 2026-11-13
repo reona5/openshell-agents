@@ -1,9 +1,9 @@
-# Codex を ChatGPT サブスクリプションの OAuth で使う provider profile(検証用)。
-# access_token だけを provider に入れ、sandbox 側の auth.json には placeholder を書く。
+# Codex を ChatGPT サブスクリプションの OAuth で使う provider profile。
+# sandbox には access_token の placeholder だけを渡し、refresh_token は gateway が持って
+# 期限の前に access_token を更新する(osa login codex が refresh を設定する)。
 # account_id はローカル比較に使われるので placeholder にできず、環境変数で平文を渡す。
-# refresh_token は入れていない(期限切れ時はホストで codex を使って更新し provider update する)。
 id: codex-oauth
-display_name: Codex (OAuth, access token only)
+display_name: Codex (OAuth, gateway refresh)
 description: OpenAI Codex CLI with a ChatGPT OAuth access token
 category: agent
 inference_capable: true
@@ -14,6 +14,18 @@ credentials:
     required: true
     auth_style: bearer
     header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://auth.openai.com/oauth/token
+      scopes: [openid, profile, email]
+      material:
+        - name: client_id
+          description: Codex CLI OAuth client ID
+          required: true
+        - name: refresh_token
+          description: Refresh token from a codex login dedicated to the gateway
+          required: true
+          secret: true
 discovery:
   credentials: [access_token]
 endpoints:
