@@ -11,8 +11,8 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_VERSION} \
     && chmod 755 /usr/local/bin/claude && /usr/local/bin/claude --version
 COPY codex-in-openshell /usr/local/bin/codex-in-openshell
 RUN chmod 755 /usr/local/bin/codex-in-openshell
-# /usr は sandbox から読み取り専用なので自動更新は必ず失敗する。版はこのイメージで固定する
-ENV DISABLE_AUTOUPDATER=1
+# 自動更新は止める。イメージの ENV は sandbox のプロセスに渡らないので、
+# DISABLE_AUTOUPDATER=1 は osa new が sandbox の作成時に --env で渡す
 USER sandbox
 # 初回のテーマ選択と注意事項の画面を飛ばす。フォルダの信頼は osa new が clone 先にだけ付ける
 RUN node -e 'const f=process.env.HOME+"/.claude.json";const fs=require("fs");const j=fs.existsSync(f)?JSON.parse(fs.readFileSync(f)):{};Object.assign(j,{hasCompletedOnboarding:true,theme:"dark"});fs.writeFileSync(f,JSON.stringify(j,null,2))'

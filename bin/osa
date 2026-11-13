@@ -116,6 +116,9 @@ cmd_login() {
 cmd_new() {
   local name="${1:?usage: osa new NAME [OWNER/REPO]}" repo="${2:-}"
   local args=(--name "$name" --policy "$ROOT/policy/sandbox.yaml" --from "$IMAGE" --no-auto-providers)
+  # イメージの ENV は sandbox のプロセスに渡らないので、ここで渡す。
+  # /usr は読み取り専用で自動更新は必ず失敗する。版はイメージで固定している
+  args+=(--env DISABLE_AUTOUPDATER=1)
   local p
   for p in claude codex github; do
     provider_exists "$p" && args+=(--provider "$p")
@@ -161,7 +164,9 @@ cmd_claude() {
 cmd_codex() {
   local n="${1:?usage: osa codex NAME [ARGS]}"; shift
   local wd; wd="$(workdir_of "$n")"
-  exec openshell sandbox exec --name "$n" --tty -- bash -lc 'cd "$0" && exec codex-in-openshell "$@"' "$wd" "$@"
+  # Codex 自身の sandbox はコンテナの中では起動できないので切り、制限は OpenShell に任せる
+  exec openshell sandbox exec --name "$n" --tty -- bash -lc \
+    'cd "$0" && exec codex-in-openshell -c sandbox_mode=\"danger-full-access\" "$@"' "$wd" "$@"
 }
 
 cmd_allow() {
